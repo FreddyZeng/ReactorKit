@@ -1,7 +1,7 @@
 <img alt="ReactorKit" src="https://cloud.githubusercontent.com/assets/931655/25277625/6aa05998-26da-11e7-9b85-e48bec938a6e.png" style="max-width: 100%">
 
 <p align="center">
-  <img alt="Swift" src="https://img.shields.io/badge/Swift-5.0-orange.svg">
+  <img alt="Swift" src="https://img.shields.io/badge/Swift-6.0-orange.svg">
   <a href="https://cocoapods.org/pods/ReactorKit" target="_blank">
     <img alt="CocoaPods" src="http://img.shields.io/cocoapods/v/ReactorKit.svg">
   </a>
@@ -38,8 +38,17 @@ You may want to see the [Examples](#examples) section first if you'd like to see
     - [What to test](#what-to-test)
     - [View testing](#view-testing)
     - [Reactor testing](#reactor-testing)
-  - [Scheduling](#scheduling)
   - [Pulse](#pulse)
+- [SwiftUI](#swiftui)
+  - [ObservableState](#observablestate)
+  - [ObservedReactor](#observedreactor)
+  - [ReactorObserving](#reactorobserving)
+  - [Pulse in SwiftUI](#pulse-in-swiftui)
+  - [Bindings](#bindings)
+    - [@ReactorBindable](#reactorbindable)
+    - [binding(get:send:)](#bindinggetsend)
+  - [ObservableStateIgnored](#observablestateignored)
+  - [Testing in SwiftUI](#testing-in-swiftui)
 - [Examples](#examples)
 - [Dependencies](#dependencies)
 - [Requirements](#requirements)
@@ -62,18 +71,18 @@ ReactorKit is a combination of [Flux](https://facebook.github.io/flux/) and [Rea
 
 ### Design Goal
 
-* **Testability**: The first purpose of ReactorKit is to separate the business logic from a view. This can make the code testable. A reactor doesn't have any dependency to a view. Just test reactors and test view bindings. See [Testing](#testing) section for details.
-* **Start Small**: ReactorKit doesn't require the whole application to follow a single architecture. ReactorKit can be adopted partially, for one or more specific views. You don't need to rewrite everything to use ReactorKit on your existing project.
-* **Less Typing**: ReactorKit focuses on avoiding complicated code for a simple thing. ReactorKit requires less code compared to other architectures. Start simple and scale up.
+- **Testability**: The first purpose of ReactorKit is to separate the business logic from a view. This can make the code testable. A reactor doesn't have any dependency to a view. Just test reactors and test view bindings. See [Testing](#testing) section for details.
+- **Start Small**: ReactorKit doesn't require the whole application to follow a single architecture. ReactorKit can be adopted partially, for one or more specific views. You don't need to rewrite everything to use ReactorKit on your existing project.
+- **Less Typing**: ReactorKit focuses on avoiding complicated code for a simple thing. ReactorKit requires less code compared to other architectures. Start simple and scale up.
 
 ### View
 
-A *View* displays data. A view controller and a cell are treated as a view. The view binds user inputs to the action stream and binds the view states to each UI component. There's no business logic in a view layer. A view just defines how to map the action stream and the state stream.
+A _View_ displays data. A view controller and a cell are treated as a view. The view binds user inputs to the action stream and binds the view states to each UI component. There's no business logic in a view layer. A view just defines how to map the action stream and the state stream.
 
-To define a view, just have an existing class conform a protocol named `View`. Then your class will have a property named `reactor` automatically. This property is typically set outside of the view.
+To define a view, just have an existing class conform a protocol named `ReactorView`. Then your class will have a property named `reactor` automatically. This property is typically set outside of the view.
 
 ```swift
-class ProfileViewController: UIViewController, View {
+class ProfileViewController: UIViewController, ReactorView {
   var disposeBag = DisposeBag()
 }
 
@@ -98,13 +107,13 @@ func bind(reactor: ProfileViewReactor) {
 
 #### Storyboard Support
 
-Use `StoryboardView` protocol if you're using a storyboard to initialize view controllers. Everything is same but the only difference is that the `StoryboardView` performs a binding after the view is loaded.
+Use `DeferredReactorView` protocol if you're using a storyboard to initialize view controllers. Everything is same but the only difference is that the `DeferredReactorView` defers binding until the view is loaded.
 
 ```swift
 let viewController = MyViewController()
-viewController.reactor = MyViewReactor() // will not executes `bind(reactor:)` immediately
+viewController.reactor = MyViewReactor() // will not execute `bind(reactor:)` immediately
 
-class MyViewController: UIViewController, StoryboardView {
+class MyViewController: UIViewController, DeferredReactorView {
   func bind(reactor: MyViewReactor) {
     // this is called after the view is loaded (viewDidLoad)
   }
@@ -113,7 +122,7 @@ class MyViewController: UIViewController, StoryboardView {
 
 ### Reactor
 
-A *Reactor* is an UI-independent layer which manages the state of a view. The foremost role of a reactor is to separate control flow from a view. Every view has its corresponding reactor and delegates all logic to its reactor. A reactor has no dependency to a view, so it can be easily tested.
+A _Reactor_ is an UI-independent layer which manages the state of a view. The foremost role of a reactor is to separate control flow from a view. Every view has its corresponding reactor and delegates all logic to its reactor. A reactor has no dependency to a view, so it can be easily tested.
 
 Conform to the `Reactor` protocol to define a reactor. This protocol requires three types to be defined: `Action`, `Mutation` and `State`. It also requires a property named `initialState`.
 
@@ -222,7 +231,6 @@ Unlike Redux, ReactorKit doesn't define a global app state. It means that you ca
 
 There is no global state in the **Action → Mutation → State** flow. You should use `transform(mutation:)` to transform the global state to a mutation. Let's assume that we have a global `BehaviorSubject` which stores the current authenticated user. If you'd like to emit a `Mutation.setUser(User?)` when the `currentUser` is changed, you can do as following:
 
-
 ```swift
 var currentUser: BehaviorSubject<User> // global state
 
@@ -268,15 +276,15 @@ ReactorKit has a built-in functionality for a testing. You'll be able to easily 
 
 First of all, you have to decide what to test. There are two things to test: a view and a reactor.
 
-* View
-    * Action: is a proper action sent to a reactor with a given user interaction?
-    * State: is a view property set properly with a following state?
-* Reactor
-    * State: is a state changed properly with an action?
+- View
+  - Action: is a proper action sent to a reactor with a given user interaction?
+  - State: is a view property set properly with a following state?
+- Reactor
+  - State: is a state changed properly with an action?
 
 #### View testing
 
-A view can be tested with a *stub* reactor. A reactor has a property `stub` which can log actions and force change states. If a reactor's stub is enabled, both `mutate()` and `reduce()` are not executed. A stub has these properties:
+A view can be tested with a _stub_ reactor. A reactor has a property `stub` which can log actions and force change states. If a reactor's stub is enabled, both `mutate()` and `reduce()` are not executed. A stub has these properties:
 
 ```swift
 var state: StateRelay<Reactor.State> { get }
@@ -365,24 +373,34 @@ func testIsLoading() {
 
 ### Scheduling
 
-Define `scheduler` property to specify which scheduler is used for reducing and observing the state stream. Note that this queue **must be** a serial queue. The default scheduler is `CurrentThreadScheduler`.
+Override the `scheduler` property to specify which scheduler runs reduction and state delivery. The default is `MainScheduler.instance`, which makes state subscription safe to bind directly to UI without an additional `observe(on:)` hop.
+
+The scheduler is applied at the **effect boundary** — each `mutate(_:)` output is rescheduled through `scheduler` before reaching `transform(mutation:)`, `reduce(_:_:)`, `transform(state:)`, and state subscribers. This holds even when `mutate(_:)` returns an observable that emits on a background thread (e.g. a network response), so you do not need to add `.observe(on: MainScheduler.instance)` inside every async `mutate` return.
+
+Override with a serial scheduler when you need to move heavy reduction work off the main thread:
 
 ```swift
 final class MyReactor: Reactor {
   let scheduler: Scheduler = SerialDispatchQueueScheduler(qos: .default)
 
   func reduce(state: State, mutation: Mutation) -> State {
-    // executed in a background thread
+    // executed on the background serial queue
     heavyAndImportantCalculation()
     return state
   }
 }
 ```
 
+Notes:
+- The scheduler **must be serial**. Concurrent schedulers break the "single writer" invariant the reducer relies on.
+- `transform(action:)` runs on the action's emission thread, not `scheduler`. Downstream of `mutate(_:)` is the scheduled section.
+- When using `ObservedReactor` for SwiftUI, keep the default `MainScheduler.instance`. Overriding to a non-main scheduler violates `ObservedReactor`'s main-actor contract.
+
 ### Pulse
 
 `Pulse` has diff only when mutated
 To explain in code, the results are as follows.
+
 ```swift
 var messagePulse: Pulse<String?> = Pulse(wrappedValue: "Hello tokijh")
 
@@ -395,6 +413,7 @@ oldMessagePulse.value == messagePulse.value // true
 
 Use when you want to receive an event only if the new value is assigned, even if it is the same value.
 like `alertMessage` (See follows or [PulseTests.swift](https://github.com/ReactorKit/ReactorKit/blob/master/Tests/ReactorKitTests/PulseTests.swift))
+
 ```swift
 // Reactor
 private final class MyReactor: Reactor {
@@ -438,30 +457,204 @@ reactor.action.onNext(.alert("tokijh")) // showAlert() is called with `tokijh`
 reactor.action.onNext(.doSomeAction)    // showAlert() is not called
 ```
 
+## SwiftUI
+
+ReactorKit supports SwiftUI through the `ReactorKitSwiftUI` module. You can use your existing reactors in SwiftUI views with one addition: annotate your `State` with `@ObservableState`.
+
+### ObservableState
+
+Add the `@ObservableState` macro to your reactor's `State` struct. This enables per-property observation — SwiftUI re-renders only when the properties a view actually reads have changed.
+
+```swift
+import ReactorKitObservation
+
+final class ProfileViewReactor: Reactor {
+  enum Action {
+    case follow
+  }
+
+  enum Mutation {
+    case setFollowing(Bool)
+  }
+
+  @ObservableState
+  struct State {
+    var username: String = ""
+    var isFollowing: Bool = false
+  }
+
+  let initialState = State()
+}
+```
+
+### ObservedReactor
+
+Wrap your reactor in `ObservedReactor` to make it observable by SwiftUI. Access state properties directly via dynamic member lookup.
+
+```swift
+import ReactorKitSwiftUI
+
+struct ProfileView: View {
+  let reactor: ObservedReactor<ProfileViewReactor>
+
+  var body: some View {
+    ReactorObserving {
+      Text(reactor.username)
+      Button("Follow") { reactor.send(.follow) }
+    }
+  }
+}
+```
+
+### ReactorObserving
+
+`ReactorObserving` enables observation tracking on iOS 13–16. On iOS 17+, SwiftUI natively tracks `Observable` property access, so `ReactorObserving` becomes a transparent passthrough.
+
+```swift
+// iOS 17+: ReactorObserving is optional
+struct ProfileView: View {
+  let reactor: ObservedReactor<ProfileViewReactor>
+
+  var body: some View {
+    Text(reactor.username)
+    Button("Follow") { reactor.send(.follow) }
+  }
+}
+```
+
+### Pulse in SwiftUI
+
+Use `pulse(_:)` to receive one-shot events as an `AsyncStream`. Unlike state observation, pulse emits even when the same value is assigned again.
+
+```swift
+var body: some View {
+  ReactorObserving {
+    Text(reactor.username)
+  }
+  .task {
+    for await message in reactor.pulse(\.$alertMessage) {
+      guard let message else { continue }
+      // show alert
+    }
+  }
+}
+```
+
+### Bindings
+
+#### @ReactorBindable
+
+For two-way bindings, conform your `Action` to `BindableAction` and use `@ReactorBindable`:
+
+```swift
+// Reactor
+enum Action: BindableAction {
+  case binding(BindingAction<State>)
+  // other actions...
+}
+
+// In reduce:
+case .binding(let action):
+  action.apply(to: &state)
+```
+
+```swift
+// View
+struct ProfileView: View {
+  @ReactorBindable var reactor: ObservedReactor<ProfileViewReactor>
+
+  var body: some View {
+    ReactorObserving {
+      TextField("Name", text: $reactor.name)
+      Toggle("Enabled", isOn: $reactor.isEnabled)
+    }
+  }
+}
+```
+
+#### binding(get:send:)
+
+For bindings that map to custom actions (not `BindableAction`), use `binding(get:send:)`:
+
+```swift
+// Closure form
+TextField("Name", text: reactor.binding(
+  get: \.name,
+  send: { .setName($0) }
+))
+
+// Constant action form
+Toggle("Enabled", isOn: reactor.binding(
+  get: \.isEnabled,
+  send: .toggleEnabled
+))
+```
+
+> **Note**: `binding(get:send:)` produces closure-based bindings. SwiftUI may re-evaluate child views on every parent body evaluation even when the bound value hasn't changed. Prefer `@ReactorBindable` when using `BindableAction` — it produces location-based bindings that let SwiftUI skip unnecessary re-renders.
+
+### ObservableStateIgnored
+
+Properties with property wrappers (other than `@Pulse`) must be explicitly excluded from observation tracking with `@ObservableStateIgnored`:
+
+```swift
+@ObservableState
+struct State {
+  var count: Int = 0
+  @ObservableStateIgnored
+  @MyCustomWrapper var customValue: String = ""
+}
+```
+
+`@Pulse` is handled automatically — no `@ObservableStateIgnored` needed.
+
+### Testing in SwiftUI
+
+ReactorKit's built-in stub works with `ObservedReactor`. Use it in SwiftUI Previews:
+
+```swift
+#Preview {
+  let reactor = ProfileViewReactor()
+  reactor.isStubEnabled = true
+  reactor.stub.state.value = .init(username: "devxoul")
+  return ProfileView(reactor: ObservedReactor(reactor: reactor))
+}
+```
+
+### SwiftUI Installation
+
+SwiftUI support requires Swift Package Manager (CocoaPods is not supported due to macro limitations).
+
+**Package.swift**
+
+```swift
+.target(name: "MyApp", dependencies: ["ReactorKit", "ReactorKitSwiftUI"])
+```
+
 ## Examples
 
-* [Counter](https://github.com/ReactorKit/ReactorKit/tree/master/Examples/Counter): The most simple and basic example of ReactorKit
-* [GitHub Search](https://github.com/ReactorKit/ReactorKit/tree/master/Examples/GitHubSearch): A simple application which provides a GitHub repository search
-* [RxTodo](https://github.com/devxoul/RxTodo): iOS Todo Application using ReactorKit
-* [Cleverbot](https://github.com/devxoul/Cleverbot): iOS Messaging Application using Cleverbot and ReactorKit
-* [Drrrible](https://github.com/devxoul/Drrrible): Dribbble for iOS using ReactorKit ([App Store](https://itunes.apple.com/us/app/drrrible/id1229592223?mt=8))
-* [Passcode](https://github.com/cruisediary/Passcode): Passcode for iOS RxSwift, ReactorKit and IGListKit example
-* [Flickr Search](https://github.com/TaeJoongYoon/FlickrSearch): A simple application which provides a Flickr Photo search with RxSwift and ReactorKit
-* [ReactorKitExample](https://github.com/gre4ixin/ReactorKitExample)
-* [reactorkit-keyboard-example](https://github.com/techinpark/reactorkit-keyboard-example): iOS Application example for develop keyboard-extensions using ReactorKit Architecture.
-* [SWHub](https://github.com/tospery/SWHub): Use ReactorKit develop the Github client
+- [Counter](https://github.com/ReactorKit/ReactorKit/tree/master/Examples/Counter): The most simple and basic example of ReactorKit (UIKit)
+- [SwiftUI Counter](https://github.com/ReactorKit/ReactorKit/tree/master/Examples/SwiftUICounter): A SwiftUI example using ObservedReactor and ReactorObserving
+- [GitHub Search](https://github.com/ReactorKit/ReactorKit/tree/master/Examples/GitHubSearch): A simple application which provides a GitHub repository search
+- [RxTodo](https://github.com/devxoul/RxTodo): iOS Todo Application using ReactorKit
+- [Cleverbot](https://github.com/devxoul/Cleverbot): iOS Messaging Application using Cleverbot and ReactorKit
+- [Drrrible](https://github.com/devxoul/Drrrible): Dribbble for iOS using ReactorKit ([App Store](https://itunes.apple.com/us/app/drrrible/id1229592223?mt=8))
+- [Passcode](https://github.com/cruisediary/Passcode): Passcode for iOS RxSwift, ReactorKit and IGListKit example
+- [Flickr Search](https://github.com/TaeJoongYoon/FlickrSearch): A simple application which provides a Flickr Photo search with RxSwift and ReactorKit
+- [ReactorKitExample](https://github.com/gre4ixin/ReactorKitExample)
+- [reactorkit-keyboard-example](https://github.com/techinpark/reactorkit-keyboard-example): iOS Application example for develop keyboard-extensions using ReactorKit Architecture.
+- [TinyHub](https://github.com/tospery/TinyHubForIOS): Use ReactorKit develop the Github client
 
 ## Dependencies
 
-* [RxSwift](https://github.com/ReactiveX/RxSwift) >= 5.0
+- [RxSwift](https://github.com/ReactiveX/RxSwift) ~> 6.0
 
 ## Requirements
 
-* Swift 5
-* iOS 8
-* macOS 10.11
-* tvOS 9.0
-* watchOS 2.0
+- Swift 6.0+
+- iOS 13.0+
+- macOS 10.15+
+- tvOS 13.0+
+- watchOS 6.0+
 
 ## Installation
 
@@ -494,6 +687,7 @@ github "ReactorKit/ReactorKit"
 ```
 
 Most Carthage installation issues can be resolved with the following:
+
 ```sh
 carthage update 2>/dev/null
 (cd Carthage/Checkouts/ReactorKit && swift package generate-xcodeproj)
@@ -504,28 +698,28 @@ carthage build
 
 Any discussions and pull requests are welcomed 💖
 
-* To development:
+- To development:
 
-    ```console
-    $ TEST=1 swift package generate-xcodeproj
-    ```
+  ```console
+  TEST=1 swift package generate-xcodeproj
+  ```
 
-* To test:
+- To test:
 
-    ```console
-    $ swift test
-    ```
+  ```console
+  swift test
+  ```
 
 ## Community
 
 ### Join
 
-* **English**: Join [#reactorkit](https://rxswift.slack.com/messages/C561PETRN/) on [RxSwift Slack](http://rxswift-slack.herokuapp.com/)
-* **Korean**: Join [#reactorkit](https://swiftkorea.slack.com/messages/C568YM2RF/) on [Swift Korea Slack](http://slack.swiftkorea.org/)
+- **English**: Join [#reactorkit](https://rxswift.slack.com/messages/C561PETRN/) on [RxSwift Slack](http://rxswift-slack.herokuapp.com/)
+- **Korean**: Join [#reactorkit](https://swiftkorea.slack.com/messages/C568YM2RF/) on [Swift Korea Slack](http://slack.swiftkorea.org/)
 
 ### Community Projects
 
-* [ReactorKit-Template](https://github.com/gre4ixin/ReactorKit-Template)
+- [ReactorKit-Template](https://github.com/gre4ixin/ReactorKit-Template)
 
 ## Who's using ReactorKit
 
@@ -540,7 +734,7 @@ Any discussions and pull requests are welcomed 💖
   <a href="https://www.kt.com"><img align="center" height="42" alt="KT" hspace="15" src="https://user-images.githubusercontent.com/931655/43634093-2ec9e94c-9746-11e8-9213-75c352e0c147.png"></a>
   <br><br>
   <a href="https://hyperconnect.com/"><img align="center" height="62" alt="Hyperconnect" hspace="15" src="https://user-images.githubusercontent.com/931655/50819891-aa89d200-136e-11e9-8b19-780e64e54b2a.png"></a>
-  <a href="https://toss.im/career/?category=engineering&positionId=7"><img align="center" height="28" alt="Toss" hspace="15" src="https://user-images.githubusercontent.com/931655/65512318-ede39b00-df13-11e9-874c-f1e478bda6c8.png"></a>
+  <a href="https://toss.im/career/?category=engineering&positionId=7"><img align="center" height="64" alt="Toss" hspace="15" src="https://user-images.githubusercontent.com/25301615/236112886-9c24bd8d-65f3-419f-9669-1dbc575996a6.png"></a>
   <a href="https://pay.line.me"><img align="center" height="58" alt="LINE Pay" hspace="15" src="https://user-images.githubusercontent.com/68603/68569839-7efdd980-04a2-11ea-8d7e-673831b1b658.png"></a>
   <br><br>
   <a href="https://www.gccompany.co.kr/"><img align="center" height="45" alt="LINE Pay" hspace="15" src="https://user-images.githubusercontent.com/931655/84870371-32beeb80-b0ba-11ea-8530-0dc71c4e385e.png"></a>
@@ -552,11 +746,11 @@ Any discussions and pull requests are welcomed 💖
 
 ## Changelog
 
-* 2017-04-18
-    * Change the repository name to ReactorKit.
-* 2017-03-17
-    * Change the architecture name from RxMVVM to The Reactive Architecture.
-    * Every ViewModels are renamed to ViewReactors.
+- 2017-04-18
+  - Change the repository name to ReactorKit.
+- 2017-03-17
+  - Change the architecture name from RxMVVM to The Reactive Architecture.
+  - Every ViewModels are renamed to ViewReactors.
 
 ## License
 

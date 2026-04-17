@@ -13,7 +13,7 @@ import RxCocoa
 import RxSwift
 
 // Conform to the protocol `View` then the property `self.reactor` will be available.
-final class CounterViewController: UIViewController, StoryboardView {
+final class CounterViewController: UIViewController, DeferredReactorView {
   @IBOutlet var decreaseButton: UIButton!
   @IBOutlet var increaseButton: UIButton!
   @IBOutlet var valueLabel: UILabel!
@@ -23,13 +23,23 @@ final class CounterViewController: UIViewController, StoryboardView {
   // Called when the new value is assigned to `self.reactor`
   func bind(reactor: CounterViewReactor) {
     // Action
-    increaseButton.rx.tap               // Tap event
-      .map { Reactor.Action.increase }  // Convert to Action.increase
+    increaseButton.rx.tap // Tap event
+      .throttle(
+        .milliseconds(500),
+        latest: false,
+        scheduler: MainScheduler.instance
+      )
+      .map { CounterViewReactor.Action.increase }  // Convert to Action.increase
       .bind(to: reactor.action)         // Bind to reactor.action
       .disposed(by: disposeBag)
 
     decreaseButton.rx.tap
-      .map { Reactor.Action.decrease }
+      .throttle(
+        .milliseconds(500),
+        latest: false,
+        scheduler: MainScheduler.instance
+      )
+      .map { CounterViewReactor.Action.decrease }
       .bind(to: reactor.action)
       .disposed(by: disposeBag)
 

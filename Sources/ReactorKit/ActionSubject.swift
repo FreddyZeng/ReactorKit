@@ -14,9 +14,9 @@ import RxSwift
 public final class ActionSubject<Element>: ObservableType, ObserverType, SubjectType {
   typealias Key = UInt
 
-  var lock = NSRecursiveLock()
+  private let lock = NSRecursiveLock()
 
-  var nextKey: Key = 0
+  private var nextKey: Key = 0
   var observers: [Key: (Event<Element>) -> ()] = [:]
 
   #if TRACE_RESOURCES

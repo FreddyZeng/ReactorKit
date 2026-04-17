@@ -4,12 +4,12 @@ import RxSwift
 #if os(iOS) || os(tvOS)
 import UIKit
 private typealias OSViewController = UIViewController
-#elseif os(OSX)
+#elseif os(macOS)
 import AppKit
 private typealias OSViewController = NSViewController
 #endif
 
-import WeakMapTable
+@preconcurrency import WeakMapTable
 
 private typealias AnyView = AnyObject
 private enum MapTables {
@@ -17,50 +17,52 @@ private enum MapTables {
   static let isReactorBinded = WeakMapTable<AnyView, Bool>()
 }
 
-public protocol _ObjCStoryboardView {
+@MainActor
+public protocol _ObjCDeferredReactorView {
   func performBinding()
 }
 
-public protocol StoryboardView: View, _ObjCStoryboardView {
-}
+@MainActor
+public protocol DeferredReactorView: ReactorView, _ObjCDeferredReactorView {}
 
-extension StoryboardView {
+extension DeferredReactorView {
   public var reactor: Reactor? {
-    get { return MapTables.reactor.value(forKey: self) as? Reactor }
+    get { MapTables.reactor.value(forKey: self) as? Reactor }
     set {
       MapTables.reactor.setValue(newValue, forKey: self)
-      self.isReactorBinded = false
-      self.disposeBag = DisposeBag()
-      self.performBinding()
+      isReactorBinded = false
+      disposeBag = DisposeBag()
+      performBinding()
     }
   }
 
   fileprivate var isReactorBinded: Bool {
-    get { return MapTables.isReactorBinded.value(forKey: self, default: false) }
+    get { MapTables.isReactorBinded.value(forKey: self, default: false) }
     set { MapTables.isReactorBinded.setValue(newValue, forKey: self) }
   }
 
   public func performBinding() {
-    guard let reactor = self.reactor else { return }
-    guard !self.isReactorBinded else { return }
-    guard !self.shouldDeferBinding(reactor: reactor) else { return }
-    self.bind(reactor: reactor)
-    self.isReactorBinded = true
+    guard let reactor = reactor else { return }
+    guard !isReactorBinded else { return }
+    guard !shouldDeferBinding(reactor: reactor) else { return }
+    bind(reactor: reactor)
+    isReactorBinded = true
   }
 
   fileprivate func shouldDeferBinding(reactor: Reactor) -> Bool {
     #if !os(watchOS)
-      return (self as? OSViewController)?.isViewLoaded == false
+    return (self as? OSViewController)?.isViewLoaded == false
     #else
-      return false
+    return false
     #endif
   }
 }
 
 #if !os(watchOS)
 extension OSViewController {
-  @objc func _reactorkit_performBinding() {
-    (self as? _ObjCStoryboardView)?.performBinding()
+  @objc
+  func _reactorkit_performBinding() {
+    (self as? _ObjCDeferredReactorView)?.performBinding()
   }
 }
 #endif

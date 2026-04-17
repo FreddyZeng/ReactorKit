@@ -1,4 +1,5 @@
 import XCTest
+
 import ReactorKit
 import RxSwift
 
@@ -6,14 +7,15 @@ import RxSwift
 import UIKit
 private typealias OSViewController = UIViewController
 private typealias OSView = UIView
-#elseif os(OSX)
+#elseif os(macOS)
 import AppKit
 private typealias OSViewController = NSViewController
 private typealias OSView = NSView
 #endif
 
 #if !os(Linux)
-final class ViewTests: XCTestCase {
+@MainActor
+final class ReactorViewTests: XCTestCase {
   func testBindIsInvoked_differentReactor() {
     let view = TestView()
     XCTAssertEqual(view.bindInvokeCount, 0)
@@ -99,27 +101,27 @@ final class ViewTests: XCTestCase {
   }
 }
 
-private final class TestView: View {
+private final class TestView: ReactorView {
   var disposeBag = DisposeBag()
   var bindInvokeCount = 0
 
   func bind(reactor: TestReactor) {
-    self.bindInvokeCount += 1
+    bindInvokeCount += 1
   }
 }
 
-private final class TestViewController: OSViewController, StoryboardView {
+private final class TestViewController: OSViewController, DeferredReactorView {
   var disposeBag = DisposeBag()
   var isLoadViewInvoked = false
   var bindInvokeCount = 0
 
   override func loadView() {
-    self.view = OSView()
-    self.isLoadViewInvoked = true
+    view = OSView()
+    isLoadViewInvoked = true
   }
 
   func bind(reactor: TestReactor) {
-    self.bindInvokeCount += 1
+    bindInvokeCount += 1
   }
 }
 

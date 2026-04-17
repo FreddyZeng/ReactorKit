@@ -7,13 +7,7 @@
 //
 
 import RxSwift
-import WeakMapTable
-
-@available(*, obsoleted: 0, renamed: "Never")
-public typealias NoAction = Never
-
-@available(*, obsoleted: 0, renamed: "Never")
-public typealias NoMutation = Never
+@preconcurrency import WeakMapTable
 
 /// A Reactor is an UI-independent layer which manages the state of a view. The foremost role of a
 /// reactor is to separate control flow from a view. Every view has its corresponding reactor and
@@ -43,7 +37,17 @@ public protocol Reactor: AnyObject {
   /// The state stream. Use this observable to observe the state changes.
   var state: Observable<State> { get }
 
-  /// A scheduler for reducing and observing the state stream. Defaults to `CurrentThreadScheduler`.
+  /// A scheduler for reducing and observing the state stream. Defaults to `MainScheduler.instance`.
+  ///
+  /// Applied at the effect boundary — each `mutate(_:)` output is rescheduled
+  /// through this scheduler before reaching `transform(mutation:)`, `reduce(_:_:)`,
+  /// `transform(state:)`, and state subscribers. This guarantees reduce and state
+  /// delivery happen on the scheduler even when `mutate(_:)` returns an observable
+  /// that emits on a background thread (e.g. a network response).
+  ///
+  /// `transform(action:)` runs on the action's emission thread, not this
+  /// scheduler. Override with a serial scheduler (e.g. `SerialDispatchQueueScheduler`)
+  /// to move reduction off the main thread.
   var scheduler: Scheduler { get }
 
   /// Transforms the action. Use this function to combine with other observables. This method is
@@ -74,109 +78,105 @@ public protocol Reactor: AnyObject {
 private typealias AnyReactor = AnyObject
 
 private enum MapTables {
-  static let action = WeakMapTable<AnyReactor, AnyObject>()
+  static let streams = WeakMapTable<AnyReactor, AnyObject>()
   static let currentState = WeakMapTable<AnyReactor, Any>()
-  static let state = WeakMapTable<AnyReactor, AnyObject>()
   static let disposeBag = WeakMapTable<AnyReactor, DisposeBag>()
   static let isStubEnabled = WeakMapTable<AnyReactor, Bool>()
   static let stub = WeakMapTable<AnyReactor, AnyObject>()
 }
 
 
+// MARK: - ReactorStreams
+
+private struct ReactorStreams<Action, State> {
+  let action: ActionSubject<Action>
+  let state: Observable<State>
+}
+
 // MARK: - Default Implementations
 
 extension Reactor {
-  private var _action: ActionSubject<Action> {
-    if self.isStubEnabled {
-      return self.stub.action
+  private var streams: ReactorStreams<Action, State> {
+    if isStubEnabled {
+      return ReactorStreams(action: stub.action, state: stub.state.asObservable())
     } else {
-      return MapTables.action.forceCastedValue(forKey: self, default: .init())
+      return MapTables.streams.forceCastedValue(forKey: self, default: createReactorStreams())
     }
   }
-  public var action: ActionSubject<Action> {
-    // Creates a state stream automatically
-    _ = self._state
 
-    // It seems that Swift has a bug in associated object when subclassing a generic class. This is
-    // a temporary solution to bypass the bug. See #30 for details.
-    return self._action
+  public var action: ActionSubject<Action> {
+    streams.action
   }
 
   public internal(set) var currentState: State {
-    get { return MapTables.currentState.forceCastedValue(forKey: self, default: self.initialState) }
+    get { MapTables.currentState.forceCastedValue(forKey: self, default: initialState) }
     set { MapTables.currentState.setValue(newValue, forKey: self) }
   }
 
-  private var _state: Observable<State> {
-    if self.isStubEnabled {
-      return self.stub.state.asObservable()
-    } else {
-      return MapTables.state.forceCastedValue(forKey: self, default: self.createStateStream())
-    }
-  }
   public var state: Observable<State> {
-    // It seems that Swift has a bug in associated object when subclassing a generic class. This is
-    // a temporary solution to bypass the bug. See #30 for details.
-    return self._state
+    streams.state
   }
 
   public var scheduler: Scheduler {
-    return CurrentThreadScheduler.instance
+    MainScheduler.instance
   }
 
   fileprivate var disposeBag: DisposeBag {
-    return MapTables.disposeBag.value(forKey: self, default: DisposeBag())
+    MapTables.disposeBag.value(forKey: self, default: DisposeBag())
   }
 
-  public func createStateStream() -> Observable<State> {
-    let action = self._action.observe(on: self.scheduler)
-    let transformedAction = self.transform(action: action)
+  private func createReactorStreams() -> ReactorStreams<Action, State> {
+    let actionSubject = ActionSubject<Action>()
+    let action = actionSubject.asObservable()
+    let transformedAction = transform(action: action)
     let mutation = transformedAction
       .flatMap { [weak self] action -> Observable<Mutation> in
-        guard let `self` = self else { return .empty() }
-        return self.mutate(action: action).catch { _ in .empty() }
+        guard let self = self else { return .empty() }
+        return self.mutate(action: action)
+          .catch { _ in .empty() }
+          .observe(on: self.scheduler)
       }
-    let transformedMutation = self.transform(mutation: mutation)
-    let state = transformedMutation         
-      .scan(self.initialState) { [weak self] state, mutation -> State in
-        guard let `self` = self else { return state }
+    let transformedMutation = transform(mutation: mutation)
+    let state = transformedMutation
+      .scan(initialState) { [weak self] state, mutation -> State in
+        guard let self = self else { return state }
         return self.reduce(state: state, mutation: mutation)
       }
       .catch { _ in .empty() }
-      .startWith(self.initialState)
-    let transformedState = self.transform(state: state)
+      .startWith(initialState)
+    let transformedState = transform(state: state)
       .do(onNext: { [weak self] state in
         self?.currentState = state
       })
       .replay(1)
-    transformedState.connect().disposed(by: self.disposeBag)
-    return transformedState
+    transformedState.connect().disposed(by: disposeBag)
+    return ReactorStreams(action: actionSubject, state: transformedState)
   }
 
   public func transform(action: Observable<Action>) -> Observable<Action> {
-    return action
+    action
   }
 
   public func mutate(action: Action) -> Observable<Mutation> {
-    return .empty()
+    .empty()
   }
 
   public func transform(mutation: Observable<Mutation>) -> Observable<Mutation> {
-    return mutation
+    mutation
   }
 
   public func reduce(state: State, mutation: Mutation) -> State {
-    return state
+    state
   }
 
   public func transform(state: Observable<State>) -> Observable<State> {
-    return state
+    state
   }
 }
 
 extension Reactor where Action == Mutation {
   public func mutate(action: Action) -> Observable<Mutation> {
-    return .just(action)
+    .just(action)
   }
 }
 
@@ -185,11 +185,11 @@ extension Reactor where Action == Mutation {
 
 extension Reactor {
   public var isStubEnabled: Bool {
-    get { return MapTables.isStubEnabled.value(forKey: self, default: false) }
+    get { MapTables.isStubEnabled.value(forKey: self, default: false) }
     set { MapTables.isStubEnabled.setValue(newValue, forKey: self) }
   }
 
   public var stub: Stub<Self> {
-    return MapTables.stub.forceCastedValue(forKey: self, default: .init(reactor: self, disposeBag: self.disposeBag))
+    MapTables.stub.forceCastedValue(forKey: self, default: .init(reactor: self, disposeBag: disposeBag))
   }
 }

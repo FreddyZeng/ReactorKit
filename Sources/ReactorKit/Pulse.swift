@@ -5,14 +5,18 @@
 //  Created by tokijh on 2021/01/11.
 //
 
+/// A property wrapper type that allows to receive events only if the new value is assigned, even if it is the same value.
+///
+/// If you want to see examples, see [Pulse](https://github.com/ReactorKit/ReactorKit?tab=readme-ov-file#pulse).
 @propertyWrapper
 public struct Pulse<Value> {
 
   public var value: Value {
     didSet {
-      self.riseValueUpdatedCount()
+      riseValueUpdatedCount()
     }
   }
+
   public internal(set) var valueUpdatedCount = UInt.min
 
   public init(wrappedValue: Value) {
@@ -20,15 +24,15 @@ public struct Pulse<Value> {
   }
 
   public var wrappedValue: Value {
-    get { return self.value }
-    set { self.value = newValue }
+    get { value }
+    set { value = newValue }
   }
 
-  public var projectedValue: Pulse<Value> {
-    return self
+  public var projectedValue: Self {
+    self
   }
 
   private mutating func riseValueUpdatedCount() {
-    self.valueUpdatedCount &+= 1 
+    valueUpdatedCount &+= 1
   }
 }

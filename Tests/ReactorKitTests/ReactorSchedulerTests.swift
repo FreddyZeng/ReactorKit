@@ -5,13 +5,16 @@
 //  Created by Suyeol Jeon on 2019/10/17.
 //
 
-import ReactorKit
-import RxSwift
 import XCTest
 
+import ReactorKit
+@preconcurrency import RxSwift
+
+@preconcurrency
 final class ReactorSchedulerTests: XCTestCase {
+
   func testStateStreamIsCreatedOnce() {
-    final class SimpleReactor: Reactor {
+    final class SimpleReactor: Reactor, @unchecked Sendable {
       typealias Action = Never
       typealias Mutation = Never
       typealias State = Int
@@ -19,34 +22,43 @@ final class ReactorSchedulerTests: XCTestCase {
       let initialState: State = 0
 
       func transform(action: Observable<Action>) -> Observable<Action> {
-        sleep(5)
         return action
       }
     }
 
+    final class StateBox: @unchecked Sendable {
+      var value: [Observable<SimpleReactor.State>] = []
+    }
+
     let reactor = SimpleReactor()
-    var states: [Observable<SimpleReactor.State>] = []
+    let states = StateBox()
     let lock = NSLock()
+    let expectation = XCTestExpectation()
 
     for _ in 0..<100 {
       DispatchQueue.global().async {
         let state = reactor.state
         lock.lock()
-        states.append(state)
+        states.value.append(state)
+        let count = states.value.count
         lock.unlock()
+
+        if count == 100 {
+          expectation.fulfill()
+        }
       }
     }
 
-    XCTWaiter().wait(for: [XCTestExpectation()], timeout: 10)
+    XCTWaiter().wait(for: [expectation], timeout: 10)
 
-    XCTAssertGreaterThan(states.count, 0)
-    for state in states {
-      XCTAssertTrue(state === states.first)
+    XCTAssertGreaterThan(states.value.count, 0)
+    for state in states.value {
+      XCTAssertTrue(state === states.value.first)
     }
   }
 
-  func testScheduler() {
-    final class SimpleReactor: Reactor {
+  func testDefaultScheduler() {
+    final class SimpleReactor: Reactor, @unchecked Sendable {
       typealias Action = Void
       typealias Mutation = Void
 
@@ -54,60 +66,109 @@ final class ReactorSchedulerTests: XCTestCase {
         var reductionThreads: [Thread] = []
       }
 
-      let initialState: State = State()
-      let scheduler: ImmediateSchedulerType = SerialDispatchQueueScheduler(qos: .default)
+      let initialState = State()
 
       func reduce(state: State, mutation: Mutation) -> State {
         var newState = state
-        let currentThread = Thread.current
-        newState.reductionThreads.append(currentThread)
+        newState.reductionThreads.append(Thread.current)
         return newState
       }
     }
 
+    final class ThreadBox: @unchecked Sendable {
+      var observationThreads: [Thread] = []
+    }
+
     let reactor = SimpleReactor()
     let disposeBag = DisposeBag()
-
-    var observationThreads: [Thread] = []
-
-    var isExecuted = false
+    let threads = ThreadBox()
+    let expectation = XCTestExpectation()
 
     DispatchQueue.global().async {
-      let currentThread = Thread.current
-
       reactor.state
         .subscribe(onNext: { _ in
-          let currentThread = Thread.current
-          observationThreads.append(currentThread)
+          threads.observationThreads.append(Thread.current)
+          if threads.observationThreads.count == 101 { // +1 for initial state
+            expectation.fulfill()
+          }
         })
         .disposed(by: disposeBag)
 
       for _ in 0..<100 {
         reactor.action.onNext(Void())
       }
-
-      XCTWaiter().wait(for: [XCTestExpectation()], timeout: 1)
-
-      let reductionThreads = reactor.currentState.reductionThreads
-      XCTAssertEqual(reductionThreads.count, 100)
-      for thread in reductionThreads {
-        XCTAssertNotEqual(thread, currentThread)
-      }
-
-      XCTAssertEqual(observationThreads.count, 101) // +1 for initial state
-
-      // initial state is observed on the same thread with the one where the state stream is created.
-      XCTAssertEqual(observationThreads[0], currentThread)
-
-      // other states are observed on the specified thread.
-      for thread in observationThreads[1...] {
-        XCTAssertNotEqual(thread, currentThread)
-      }
-
-      isExecuted = true
     }
 
-    XCTWaiter().wait(for: [XCTestExpectation()], timeout: 1.5)
-    XCTAssertTrue(isExecuted)
+    XCTWaiter().wait(for: [expectation], timeout: 5)
+
+    let reductionThreads = reactor.currentState.reductionThreads
+    XCTAssertEqual(reductionThreads.count, 100)
+    // Default scheduler is MainScheduler — reduce runs on main.
+    for thread in reductionThreads {
+      XCTAssertTrue(thread.isMainThread)
+    }
+    // Post-initial emissions are rescheduled to main via the upstream observe(on:).
+    // The initial-state emission (index 0) is delivered on the subscribe thread.
+    XCTAssertEqual(threads.observationThreads.count, 101)
+    for thread in threads.observationThreads.dropFirst() {
+      XCTAssertTrue(thread.isMainThread)
+    }
+  }
+
+  func testCustomScheduler() {
+    final class SimpleReactor: Reactor, @unchecked Sendable {
+      typealias Action = Void
+      typealias Mutation = Void
+
+      struct State {
+        var reductionThreads: [Thread] = []
+      }
+
+      let initialState = State()
+      let scheduler: ImmediateSchedulerType = SerialDispatchQueueScheduler(qos: .default)
+
+      func reduce(state: State, mutation: Mutation) -> State {
+        var newState = state
+        newState.reductionThreads.append(Thread.current)
+        return newState
+      }
+    }
+
+    final class ThreadBox: @unchecked Sendable {
+      var observationThreads: [Thread] = []
+    }
+
+    let reactor = SimpleReactor()
+    let disposeBag = DisposeBag()
+    let threads = ThreadBox()
+    let expectation = XCTestExpectation()
+
+    DispatchQueue.global().async {
+      reactor.state
+        .subscribe(onNext: { _ in
+          threads.observationThreads.append(Thread.current)
+          if threads.observationThreads.count == 101 {
+            expectation.fulfill()
+          }
+        })
+        .disposed(by: disposeBag)
+
+      for _ in 0..<100 {
+        reactor.action.onNext(Void())
+      }
+    }
+
+    XCTWaiter().wait(for: [expectation], timeout: 5)
+
+    let reductionThreads = reactor.currentState.reductionThreads
+    XCTAssertEqual(reductionThreads.count, 100)
+    // Custom scheduler is a background serial queue — reduce runs off main.
+    for thread in reductionThreads {
+      XCTAssertFalse(thread.isMainThread)
+    }
+    XCTAssertEqual(threads.observationThreads.count, 101)
+    for thread in threads.observationThreads.dropFirst() {
+      XCTAssertFalse(thread.isMainThread)
+    }
   }
 }

@@ -13,7 +13,7 @@ import ReactorKit
 import RxCocoa
 import RxSwift
 
-class GitHubSearchViewController: UIViewController, StoryboardView {
+class GitHubSearchViewController: UIViewController, DeferredReactorView {
   @IBOutlet var tableView: UITableView!
   let searchController = UISearchController(searchResultsController: nil)
 
@@ -21,8 +21,16 @@ class GitHubSearchViewController: UIViewController, StoryboardView {
 
   override func viewDidLoad() {
     super.viewDidLoad()
-    tableView.scrollIndicatorInsets.top = tableView.contentInset.top
-    searchController.dimsBackgroundDuringPresentation = false
+    if #available(iOS 14, *) {
+      tableView.verticalScrollIndicatorInsets.top = tableView.contentInset.top
+    } else {
+      tableView.scrollIndicatorInsets.top = tableView.contentInset.top
+    }
+    if #available(iOS 13, *) {
+      searchController.obscuresBackgroundDuringPresentation = false
+    } else {
+      searchController.dimsBackgroundDuringPresentation = false
+    }
     navigationItem.searchController = searchController
   }
 
